@@ -1413,7 +1413,11 @@ static void render(App *app)
 
     /* Para pruebas: captura de la ventana completa (--ui-shot) */
     if (ui_shot_path) {
-        SDL_Surface *shot = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
+        /* Del tamaño de lo que dibuja el renderer, que puede ser mayor que la ventana (SDL3
+         * en macOS): con el de la ventana, SDL_RenderReadPixels escribía más allá de la superficie */
+        int ow = w, oh = h;
+        if (SDL_GetRendererOutputSize(app->ren, &ow, &oh) != 0) { ow = w; oh = h; }
+        SDL_Surface *shot = SDL_CreateRGBSurfaceWithFormat(0, ow, oh, 32, SDL_PIXELFORMAT_ARGB8888);
         if (shot && SDL_RenderReadPixels(app->ren, NULL, SDL_PIXELFORMAT_ARGB8888, shot->pixels, shot->pitch) == 0)
             SDL_SaveBMP(shot, ui_shot_path);
         SDL_FreeSurface(shot);
