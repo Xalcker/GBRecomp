@@ -104,3 +104,9 @@ jobs:
           ls dist
           gh release create "$GITHUB_REF_NAME" dist/*.tar.gz --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" --generate-notes
+
+      # TEMPORAL: backtrace de gb en macOS
+      - name: Depurar gb (macOS)
+        if: failure() && runner.os == 'macOS'
+        run: |
+          lldb --batch -o run -k bt -k quit -- ./gb testroms/dmg-acid2/dmg-acid2.gb --ui-shot build/x.bmp --ui-frames 5 --ui-menu 0 2>&1 | tail -60

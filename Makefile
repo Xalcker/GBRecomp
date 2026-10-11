@@ -76,7 +76,7 @@ SDL_LIBS := -static $(shell pkg-config --libs --static sdl2 2>/dev/null) -lcomdl
 else
 SDL_LIBS := $(shell pkg-config --libs sdl2 2>/dev/null)
 endif
-PLATFORM := main_sdl.c files.c i18n.c settings.c ui_menu.c ui_font.c export.c png.c iconos.c
+GB_SRC := main_sdl.c files.c i18n.c settings.c ui_menu.c ui_font.c export.c png.c iconos.c
 # Windows: el ícono del .exe (el del Game Boy)
 ifeq ($(OS),Windows_NT)
 WINRES := $(BUILD)/gb_icono.o
@@ -85,9 +85,9 @@ $(WINRES): src/platform/icono_gb.ico | $(BUILD)
 	windres -I src/platform -i $(BUILD)/gb_icono.rc -o $@ -O coff
 endif
 
-gb$(EXE): $(PLATFORM:%=src/platform/%) $(wildcard src/platform/*.h) $(BUILD)/libgbrt.a $(WINRES)
+gb$(EXE): $(GB_SRC:%=src/platform/%) $(wildcard src/platform/*.h) $(BUILD)/libgbrt.a $(WINRES)
 	$(CC) $(CFLAGS) $(SDL_CFLAGS) -DGB_INTERP -Isrc/runtime -Isrc/platform -o $@ \
-		$(PLATFORM:%=src/platform/%) $(BUILD)/libgbrt.a $(WINRES) $(SDL_LIBS) -lm
+		$(GB_SRC:%=src/platform/%) $(BUILD)/libgbrt.a $(WINRES) $(SDL_LIBS) -lm
 
 # Archivos que gbrecomp lleva adentro y escribe en cada proyecto generado
 # (tools/visor.html no va al proyecto: es para gbrecomp --html)
