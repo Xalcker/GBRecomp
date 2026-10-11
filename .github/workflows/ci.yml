@@ -76,13 +76,6 @@ jobs:
       - name: Pruebas
         run: make test
 
-      # TEMPORAL: backtrace de gb en macOS
-      - name: Depurar gb (macOS)
-        if: failure() && runner.os == 'macOS'
-        run: |
-          lldb --batch -o run -k bt -k quit -- ./gb testroms/dmg-acid2/dmg-acid2.gb --ui-shot build/x.bmp --ui-frames 5 --ui-menu 0 2>&1 | tail -60
-
-      - name: Paquete
         run: make dist
 
       - uses: actions/upload-artifact@v4
