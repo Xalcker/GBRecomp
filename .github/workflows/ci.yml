@@ -76,6 +76,7 @@ jobs:
       - name: Pruebas
         run: make test
 
+      - name: Paquete
         run: make dist
 
       - uses: actions/upload-artifact@v4
