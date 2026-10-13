@@ -1621,14 +1621,15 @@ static void emit_code(const char *dir)
  * mientras el DMA corre solo se puede leer HRAM. Su dirección en HRAM no se conoce al
  * generar, así que se compila una vez por cada dirección posible.
  *
- * Los moldes dan la forma de la rutina; los bytes concretos (el byte alto del origen,
- * el contador del bucle) se toman de la ROM. En ejecución solo se usa el código
- * compilado si los bytes de HRAM coinciden exactamente con una variante encontrada,
- * así que un molde laxo no arriesga nada: lo peor es compilar una variante que no se
- * usa. Una variante que aparece al final de otra más larga no cuenta por separado. */
+ * match_dma reconoce la forma de la rutina en la ROM y los bytes concretos (el byte alto
+ * del origen, el contador del bucle) salen de la ROM misma, así que cada juego compila
+ * solo las variantes que tiene. En ejecución se usa el código compilado únicamente si
+ * los bytes de HRAM coinciden exactamente con una variante encontrada: un reconocedor
+ * laxo no arriesga nada, lo peor es compilar una variante que no se usa. Una variante
+ * que aparece al final de otra más larga no cuenta por separado. */
 #define HRAM_MAXLEN 16
 #define HRAM_MAXSIGS 4        /* variantes que se compilan por juego */
-#define HRAM_MAXCANDS 16      /* variantes distintas que se consideran */
+#define HRAM_MAXCANDS 32      /* variantes distintas que se consideran */
 #define HRAM_MAXOCCS 256      /* apariciones que se recuerdan */
 
 typedef struct {
@@ -1636,24 +1637,6 @@ typedef struct {
     u8 len;
     u8 bytes[HRAM_MAXLEN];
 } HramSig;
-
-typedef struct {
-    u8 len;
-    u8 bytes[HRAM_MAXLEN];
-    u8 any[HRAM_MAXLEN];   /* 1 = cualquier valor en esa posición */
-} HramTemplate;
-
-static const HramTemplate hram_templates[] = {
-    /* ld a,N / ldh ($46),a / ld a,M / dec a / jr nz / ret: la rutina lleva su origen */
-    { 10, { 0x3E, 0, 0xE0, 0x46, 0x3E, 0, 0x3D, 0x20, 0xFD, 0xC9 },
-          { 0, 1, 0, 0, 0, 1, 0, 0, 0, 0 } },
-    /* ldh ($46),a / ld a,M / dec a / jr nz / ret: el llamador pone A */
-    { 8, { 0xE0, 0x46, 0x3E, 0, 0x3D, 0x20, 0xFD, 0xC9 },
-         { 0, 0, 0, 1, 0, 0, 0, 0 } },
-    /* como la primera, con cuatro nop antes del ret */
-    { 14, { 0x3E, 0, 0xE0, 0x46, 0x3E, 0, 0x3D, 0x20, 0xFD, 0, 0, 0, 0, 0xC9 },
-          { 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0 } },
-};
 
 static HramSig hram_sigs[HRAM_MAXSIGS];
 static unsigned n_hram_sigs;
@@ -1697,34 +1680,59 @@ static unsigned hram_starts(const HramSig *s, unsigned starts[HRAM_MAXLEN])
     return n;
 }
 
-/* Busca en la ROM lo que casa con algún molde y se queda con las variantes concretas,
- * de la más larga a la más corta, sin las que solo aparecen al final de otra */
+/* ¿Hay en p una rutina de DMA de OAM? Devuelve su longitud, 0 si no. Forma:
+ *   [di] [ld a,N] ldh ($46),a | ld [c],a   dispara el DMA (con ld [c],a el llamador deja C = $46)
+ *   ld a,M / dec a | dec r                 espera (con dec r el llamador deja el contador en r)
+ *   jr nz,-3 / [nop hasta 4] / ret | reti
+ * Variantes vistas: Tetris (ld a,N), Wario Land II (sin ld a,N), Donkey Kong Land 2
+ * (cuatro nop), Tony Hawk (un nop), Mega Man Xtreme (di ... reti), Tomb Raider (dec e)
+ * y Metal Gear Solid (ld [c],a / dec b). */
+static unsigned match_dma(const u8 *p, size_t avail)
+{
+#define BYTE_AT(i) ((size_t)(i) < avail ? (int)p[i] : -1)
+    unsigned q = 0;
+    if (BYTE_AT(q) == 0xF3) q++;                                /* di */
+    if (BYTE_AT(q) == 0x3E) q += 2;                             /* ld a,N */
+    if (BYTE_AT(q) == 0xE0 && BYTE_AT(q + 1) == 0x46) q += 2;   /* ldh ($46),a */
+    else if (BYTE_AT(q) == 0xE2) q++;                           /* ld [c],a */
+    else return 0;
+    int op = BYTE_AT(q);
+    if (op == 0x3E && BYTE_AT(q + 2) == 0x3D) q += 3;           /* ld a,M / dec a */
+    else if (op == 0x05 || op == 0x0D || op == 0x15 || op == 0x1D || op == 0x25 || op == 0x2D)
+        q++;                                                    /* dec b, c, d, e, h o l */
+    else return 0;
+    if (BYTE_AT(q) != 0x20 || BYTE_AT(q + 1) != 0xFD) return 0; /* jr nz,-3 */
+    q += 2;
+    for (unsigned n = 0; n < 4 && BYTE_AT(q) == 0x00; n++) q++; /* nop */
+    if (BYTE_AT(q) != 0xC9 && BYTE_AT(q) != 0xD9) return 0;     /* ret | reti */
+    return q + 1;
+#undef BYTE_AT
+}
+
+/* Busca en la ROM las rutinas de DMA y se queda con las variantes concretas, de la más
+ * larga a la más corta, sin las que solo aparecen al final de otra */
 static void find_hram_sigs(void)
 {
     HramSig cand[HRAM_MAXCANDS];
     struct { unsigned cand; size_t pos; } occ[HRAM_MAXOCCS];
     unsigned ncand = 0, nocc = 0;
 
-    for (unsigned t = 0; t < sizeof hram_templates / sizeof hram_templates[0]; t++) {
-        const HramTemplate *tp = &hram_templates[t];
-        for (size_t p = 0; p + tp->len <= rom_size; p++) {
-            unsigned k = 0;
-            while (k < tp->len && (tp->any[k] || rom[p + k] == tp->bytes[k])) k++;
-            if (k < tp->len) continue;
+    for (size_t p = 0; p < rom_size; p++) {
+        unsigned len = match_dma(rom + p, rom_size - p);
+        if (!len) continue;
 
-            unsigned c = 0;
-            while (c < ncand && !(cand[c].len == tp->len && memcmp(cand[c].bytes, rom + p, tp->len) == 0)) c++;
-            if (c == ncand) {
-                if (ncand == HRAM_MAXCANDS) continue;
-                cand[ncand].len = tp->len;
-                memcpy(cand[ncand].bytes, rom + p, tp->len);
-                ncand++;
-            }
-            if (nocc < HRAM_MAXOCCS) {
-                occ[nocc].cand = c;
-                occ[nocc].pos = p;
-                nocc++;
-            }
+        unsigned c = 0;
+        while (c < ncand && !(cand[c].len == len && memcmp(cand[c].bytes, rom + p, len) == 0)) c++;
+        if (c == ncand) {
+            if (ncand == HRAM_MAXCANDS) continue;
+            cand[ncand].len = (u8)len;
+            memcpy(cand[ncand].bytes, rom + p, len);
+            ncand++;
+        }
+        if (nocc < HRAM_MAXOCCS) {
+            occ[nocc].cand = c;
+            occ[nocc].pos = p;
+            nocc++;
         }
     }
 
