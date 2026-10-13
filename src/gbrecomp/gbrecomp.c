@@ -1617,6 +1617,126 @@ static void emit_code(const char *dir)
     if (f) fclose(f);
 }
 
+/* Rutina de DMA de OAM: ld a,$C0 / ldh ($46),a / ld a,$28 / dec a / jr nz / ret.
+ * El juego la copia a HRAM y la ejecuta desde ahí, porque mientras el DMA corre
+ * solo se puede leer HRAM. Su dirección en HRAM no se conoce al generar, así que
+ * se compila una vez por cada dirección posible. */
+static const u8 dma_oam_bytes[10] = { 0x3E, 0xC0, 0xE0, 0x46, 0x3E, 0x28, 0x3D, 0x20, 0xFD, 0xC9 };
+#define HRAM_LO 0xFF80u
+#define HRAM_HI 0xFFF5u    /* último inicio posible: la rutina mide 10 bytes y HRAM acaba en FFFE */
+
+typedef struct {
+    unsigned base;         /* dirección en HRAM de la copia que se está emitiendo */
+    unsigned starts[10];   /* desplazamientos de inicio de instrucción dentro de la rutina */
+    unsigned nstarts;
+} HramRoutine;
+
+static int hram_is_start(const HramRoutine *r, unsigned addr)
+{
+    for (unsigned i = 0; i < r->nstarts; i++)
+        if (r->base + r->starts[i] == addr) return 1;
+    return 0;
+}
+
+/* Saltos dentro de la rutina van a su etiqueta; los demás salen al despachador */
+static void hram_jump(Emit *e, const char *expr, int is_const, uint16_t target)
+{
+    HramRoutine *r = e->user;
+    if (is_const && hram_is_start(r, target)) emit_line(e, "goto L_%04X;", target);
+    else emit_line(e, "c->pc = %s; return;", expr);
+}
+
+/* gen/hram.c: una función por dirección de HRAM y el lookup que las elige. Si la
+ * ROM no tiene la rutina, el lookup devuelve NULL y HRAM sigue en el intérprete. */
+static void emit_hram(const char *dir)
+{
+    FILE *f = open_out(dir, "gen/hram.c");
+    fprintf(f, "/* Generado por gbrecomp: no editar. */\n#include \"recomp.h\"\n#include <string.h>\n\n");
+
+    int present = 0;
+    for (size_t i = 0; i + sizeof dma_oam_bytes <= rom_size && !present; i++)
+        present = memcmp(rom + i, dma_oam_bytes, sizeof dma_oam_bytes) == 0;
+    printf("rutina de DMA de OAM en HRAM: %s\n", present ? "sí" : "no");
+
+    if (!present) {
+        fprintf(f, "RecompFn hram_lookup(GB *g, u16 pc)\n{\n    (void)g;\n    (void)pc;\n    return NULL;\n}\n");
+        fclose(f);
+        return;
+    }
+
+    /* Inicios de instrucción: se decodifica la rutina una vez */
+    HramRoutine r = { 0 };
+    u8 pad[13] = { 0 };    /* 3 bytes de margen para decodificar la última instrucción */
+    memcpy(pad, dma_oam_bytes, sizeof dma_oam_bytes);
+    for (unsigned off = 0; off < sizeof dma_oam_bytes;) {
+        Insn in;
+        sm83_decode(pad + off, (uint16_t)off, &in);
+        r.starts[r.nstarts++] = off;
+        off += in.len;
+    }
+
+    fprintf(f, "static const u8 hram_dma_bytes[10] = {");
+    for (unsigned i = 0; i < 10; i++) fprintf(f, "%s0x%02X", i ? ", " : " ", dma_oam_bytes[i]);
+    fprintf(f, " };\n");
+    fprintf(f, "static const u8 hram_dma_starts[%u] = {", r.nstarts);
+    for (unsigned i = 0; i < r.nstarts; i++) fprintf(f, "%s%u", i ? ", " : " ", r.starts[i]);
+    fprintf(f, " };\n\n");
+
+    Emit e = { 0 };
+    e.f = f;
+    e.recomp = 1;
+    e.jump = hram_jump;
+    for (unsigned base = HRAM_LO; base <= HRAM_HI; base++) {
+        r.base = base;
+        e.user = &r;
+        fprintf(f, "static void hram_dma_%04X(GB *g)\n{\n    Cpu *c = &g->cpu;\n    switch (c->pc) {\n", base);
+        for (unsigned i = 0; i < r.nstarts; i++)
+            fprintf(f, "    case 0x%04X: goto L_%04X;\n", base + r.starts[i], base + r.starts[i]);
+        fprintf(f, "    default: gb_interp_step(g); return;\n    }\n");
+
+        for (unsigned i = 0; i < r.nstarts; i++) {
+            unsigned off = r.starts[i], addr = base + off;
+            Insn in;
+            char text[48];
+            sm83_decode(pad + off, (uint16_t)addr, &in);
+            sm83_disasm(pad + off, (uint16_t)addr, text, sizeof text);
+            memcpy(e.b, pad + off, 3);
+            e.addr = (uint16_t)addr;
+
+            fprintf(f, "L_%04X: /* %s */\n", addr, text);
+            fprintf(f, "    CHECK(0x%04X);\n", addr);
+            fprintf(f, "    {\n");
+            e.indent = "        ";
+            emit_insn(&e, e.b[0]);
+            fprintf(f, "    }\n");
+
+            if (in.kind == INS_HALT || in.kind == INS_STOP || sm83_ends_block(&in)) continue;
+            unsigned next = addr + in.len;
+            if (!hram_is_start(&r, next)) fprintf(f, "    c->pc = 0x%04X; return;\n", next);
+        }
+        fprintf(f, "}\n\n");
+    }
+
+    fprintf(f, "static const RecompFn hram_dma_fns[%u] = {\n", HRAM_HI - HRAM_LO + 1);
+    for (unsigned base = HRAM_LO; base <= HRAM_HI; base++) fprintf(f, "    hram_dma_%04X,\n", base);
+    fprintf(f, "};\n\n");
+
+    /* La copia empieza en pc - inicio: se usa solo si esos 10 bytes de HRAM siguen
+     * siendo los reconocidos, así que una copia distinta cae al intérprete */
+    fprintf(f,
+        "RecompFn hram_lookup(GB *g, u16 pc)\n"
+        "{\n"
+        "    for (unsigned i = 0; i < %u; i++) {\n"
+        "        u32 base = (u32)pc - hram_dma_starts[i];\n"
+        "        if (base < 0x%04X || base > 0x%04X) continue;\n"
+        "        if (memcmp(g->hram + (base - 0xFF80), hram_dma_bytes, sizeof hram_dma_bytes) == 0)\n"
+        "            return hram_dma_fns[base - 0xFF80];\n"
+        "    }\n"
+        "    return NULL;\n"
+        "}\n", r.nstarts, (unsigned)HRAM_LO, (unsigned)HRAM_HI);
+    fclose(f);
+}
+
 /* Tablas del despachador: banco → página de 256 bytes → función por dirección */
 static void emit_dispatch(const char *dir)
 {
@@ -1664,11 +1784,13 @@ static void emit_dispatch(const char *dir)
     }
     fprintf(f, "};\n\n");
 
+    fprintf(f, "RecompFn hram_lookup(GB *g, u16 pc);\n\n");
     fprintf(f,
         "RecompFn recomp_lookup(GB *g, u16 pc)\n"
         "{\n"
         "    const RecompFn *const *table;\n"
         "    u32 off;\n"
+        "    if (pc >= 0xFF80 && pc < 0xFFFF) return hram_lookup(g, pc);\n"
         "    /* El código de cada banco se compiló para su región: el banco 0 en\n"
         "     * $0000-$3FFF y los demás en $4000-$7FFF */\n"
         "    if (pc < 0x4000) {\n"
@@ -2181,6 +2303,7 @@ int main(int argc, char **argv)
     snprintf(path, sizeof path, "%s/platform", out); make_dir(path);
 
     emit_code(out);
+    emit_hram(out);
     emit_dispatch(out);
     emit_info(out, sha1, title, exe_name, ninsns);
     emit_makefile(out, exe_name);
