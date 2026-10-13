@@ -192,13 +192,17 @@ fi
 # --- Recompilador: código que el juego copia a WRAM, aprendido de la traza. Dos rondas, como
 #     tests/recomp_game.sh: sin traza, difftest interpreta ese código y apunta sus bytes
 #     (--uncovered); con esa traza, gbrecomp lo compila y difftest ya no lo interpreta. La primera
-#     ronda debe interpretar código de RAM y la segunda no (si no, la prueba no probaría nada) ---
+#     ronda debe interpretar código de RAM y la segunda no (si no, la prueba no probaría nada).
+#     El sleep 1 es por el make 3.81 de macOS, que compara fechas con precisión de un segundo: una
+#     primera ronda rápida deja gen/ram.c regenerado en el mismo segundo que su objeto, make no lo
+#     recompila y la segunda ronda sigue con el código viejo ---
 ciclo_ram() {    # ROM NOMBRE CUADROS
     mkdir -p build
     ./gbrecomp$EXE "$1" -o build/out/$2 --name $2 > /tmp/gbtest.out 2>&1 \
         && make -s -C build/out/$2 -j4 >> /tmp/gbtest.out 2>&1 \
         && build/out/$2/difftest$EXE "$1" --frames $3 --seed 1 --uncovered build/$2.unc > /tmp/gbtest.out 2>&1 \
         && grep -q 'interpretada en RAM' /tmp/gbtest.out \
+        && sleep 1 \
         && ./gbrecomp$EXE "$1" -o build/out/$2 --name $2 --trace build/$2.unc > /tmp/gbtest.out 2>&1 \
         && grep -q 'código en WRAM/HRAM aprendido' /tmp/gbtest.out \
         && make -s -C build/out/$2 -j4 >> /tmp/gbtest.out 2>&1 \
