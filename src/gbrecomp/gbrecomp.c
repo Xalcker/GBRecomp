@@ -1388,7 +1388,37 @@ static void discover(void)
     }
 }
 
-/* Traza: líneas "BB:AAAA" (banco y dirección en hexadecimal) */
+/* Código que el juego ejecutó desde WRAM o HRAM, aprendido de la traza: una instrucción por
+ * línea, "ram DIRECCION BYTES" en hexadecimal (difftest --uncovered). Se compila en emit_ram */
+typedef struct { u16 addr; u8 len; u8 bytes[3]; } RamObs;
+static RamObs *ram_obs;
+static size_t n_ram_obs, cap_ram_obs;
+
+static void ram_trace_line(const char *s)
+{
+    unsigned addr, v[3] = { 0, 0, 0 };
+    int n = sscanf(s, "%x %x %x %x", &addr, &v[0], &v[1], &v[2]);
+    if (n < 2) return;
+    unsigned len = (unsigned)n - 1;
+    int wram = addr >= 0xC000 && addr + len <= 0xE000;
+    int hram = addr >= 0xFF80 && addr + len <= 0xFFFF;
+    if (!wram && !hram) return;
+    u8 raw[3] = { (u8)v[0], (u8)v[1], (u8)v[2] };
+    Insn in;
+    sm83_decode(raw, (uint16_t)addr, &in);
+    if (in.len != len) return;    /* los bytes no son una instrucción completa */
+    if (n_ram_obs == cap_ram_obs) {
+        cap_ram_obs = cap_ram_obs ? cap_ram_obs * 2 : 256;
+        ram_obs = realloc(ram_obs, cap_ram_obs * sizeof *ram_obs);
+        if (!ram_obs) die("sin memoria");
+    }
+    RamObs *o = &ram_obs[n_ram_obs++];
+    o->addr = (u16)addr;
+    o->len = (u8)len;
+    memcpy(o->bytes, raw, sizeof o->bytes);
+}
+
+/* Traza: líneas "BB:AAAA" (banco y dirección en hexadecimal) y "ram AAAA BYTES" */
 static void load_trace(const char *path)
 {
     FILE *f = fopen(path, "r");
@@ -1400,6 +1430,10 @@ static void load_trace(const char *path)
     push_origin = ORG_TRACE;
     push_from_bank = EV_NONE;
     while (fgets(line, sizeof line, f)) {
+        if (strncmp(line, "ram ", 4) == 0) {
+            ram_trace_line(line + 4);
+            continue;
+        }
         if (sscanf(line, "%x:%x", &bank, &addr) != 2) continue;
         if (bank >= nbanks || addr > 0x7FFF) continue;
         if (!in_region(bank, addr)) continue;
@@ -1410,6 +1444,7 @@ static void load_trace(const char *path)
     }
     fclose(f);
     printf("traza: %u puntos de entrada\n", n);
+    if (n_ram_obs) printf("traza: %zu instrucciones en WRAM/HRAM\n", n_ram_obs);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1941,6 +1976,174 @@ static void emit_hram(const char *dir)
     fclose(f);
 }
 
+/* Código que el juego copia a WRAM o HRAM y ejecuta desde ahí (manejadores de interrupción,
+ * trampolines de cambio de banco, saltos por vectores en RAM). No está en la ROM donde corre,
+ * así que se aprende de la traza (ram_obs). Las instrucciones que van una detrás de otra forman
+ * un bloque y cada bloque se compila con sus direcciones, como el código de ROM. En ejecución
+ * se usa solo si los bytes de RAM siguen siendo los del bloque (ram_match): si el juego cambió
+ * ese código, cae al intérprete. difftest solo apunta las instrucciones cuyos bytes no cambian
+ * entre ejecuciones, y aquí se descartan las direcciones que aparecen con bytes distintos. */
+#define RAM_MAXBLOCK 2048    /* bytes por bloque */
+
+typedef struct {
+    const RamObs *o;         /* instrucciones del bloque, contiguas y en orden */
+    size_t n;
+    unsigned start, len;     /* primera dirección y bytes que cubre */
+} RamBlock;
+
+static int ram_obs_cmp(const void *a, const void *b)
+{
+    const RamObs *x = a, *y = b;
+    if (x->addr != y->addr) return x->addr < y->addr ? -1 : 1;
+    if (x->len != y->len) return x->len < y->len ? -1 : 1;
+    return memcmp(x->bytes, y->bytes, sizeof x->bytes);
+}
+
+static int ram_block_has(const RamBlock *b, unsigned addr)
+{
+    for (size_t i = 0; i < b->n; i++)
+        if (b->o[i].addr == addr) return 1;
+    return 0;
+}
+
+/* Saltos dentro del bloque van a su etiqueta; los demás salen al despachador */
+static void ram_jump(Emit *e, const char *expr, int is_const, uint16_t target)
+{
+    const RamBlock *b = e->user;
+    if (is_const && ram_block_has(b, target)) emit_line(e, "goto L_%04X;", target);
+    else emit_line(e, "c->pc = %s; return;", expr);
+}
+
+static void emit_ram_block(FILE *f, size_t bi, const RamBlock *b)
+{
+    fprintf(f, "static const u8 ram_b%zu_bytes[%u] = {", bi, b->len);
+    unsigned k = 0;
+    for (size_t i = 0; i < b->n; i++)
+        for (unsigned x = 0; x < b->o[i].len; x++, k++)
+            fprintf(f, "%s0x%02X", k % 16 ? ", " : k ? ",\n    " : " ", b->o[i].bytes[x]);
+    fprintf(f, " };\n\n");
+
+    Emit e = { 0 };
+    e.f = f;
+    e.recomp = 1;
+    e.jump = ram_jump;
+    e.user = (void *)b;
+    fprintf(f, "static void ram_b%zu(GB *g)\n{\n    Cpu *c = &g->cpu;\n    switch (c->pc) {\n", bi);
+    for (size_t i = 0; i < b->n; i++)
+        fprintf(f, "    case 0x%04X: goto L_%04X;\n", b->o[i].addr, b->o[i].addr);
+    fprintf(f, "    default: gb_interp_step(g); return;\n    }\n");
+
+    for (size_t i = 0; i < b->n; i++) {
+        const RamObs *o = &b->o[i];
+        Insn in;
+        char text[48];
+        sm83_decode(o->bytes, o->addr, &in);
+        sm83_disasm(o->bytes, o->addr, text, sizeof text);
+        memcpy(e.b, o->bytes, sizeof e.b);
+        e.addr = o->addr;
+
+        fprintf(f, "L_%04X: /* %s */\n", o->addr, text);
+        fprintf(f, "    CHECK(0x%04X);\n", o->addr);
+        fprintf(f, "    {\n");
+        e.indent = "        ";
+        emit_insn(&e, e.b[0]);
+        fprintf(f, "    }\n");
+
+        if (in.kind == INS_HALT || in.kind == INS_STOP || sm83_ends_block(&in)) continue;
+        if (i + 1 == b->n) fprintf(f, "    c->pc = 0x%04X; return;\n", (unsigned)(o->addr + o->len));
+    }
+    fprintf(f, "}\n\n");
+}
+
+/* gen/ram.c: los bloques aprendidos de la traza y el lookup que los elige. Sin trazas de RAM,
+ * el lookup devuelve NULL y la RAM sigue en el intérprete. */
+static void emit_ram(const char *dir)
+{
+    FILE *f = open_out(dir, "gen/ram.c");
+    fprintf(f, "/* Generado por gbrecomp: no editar. */\n#include \"recomp.h\"\n#include <string.h>\n\n");
+
+    /* Observaciones ordenadas; una dirección con bytes distintos en varias corridas no tiene un
+     * código claro y se descarta */
+    qsort(ram_obs, n_ram_obs, sizeof *ram_obs, ram_obs_cmp);
+    size_t kept = 0, conflicts = 0;
+    for (size_t i = 0; i < n_ram_obs;) {
+        size_t j = i + 1;
+        int same = 1;
+        while (j < n_ram_obs && ram_obs[j].addr == ram_obs[i].addr) {
+            if (ram_obs_cmp(&ram_obs[i], &ram_obs[j]) != 0) same = 0;
+            j++;
+        }
+        if (same) ram_obs[kept++] = ram_obs[i];
+        else conflicts++;
+        i = j;
+    }
+    n_ram_obs = kept;
+
+    /* Bloques: instrucciones una detrás de otra, sin cruzar el límite entre los bancos de WRAM
+     * ($D000), que no son contiguos en memoria */
+    RamBlock *blocks = calloc(n_ram_obs ? n_ram_obs : 1, sizeof *blocks);
+    if (!blocks) die("sin memoria");
+    size_t nblocks = 0;
+    for (size_t i = 0; i < n_ram_obs;) {
+        size_t j = i + 1;
+        unsigned end = ram_obs[i].addr + ram_obs[i].len;
+        while (j < n_ram_obs && ram_obs[j].addr == end &&
+               (ram_obs[j].addr < 0xD000) == (ram_obs[i].addr < 0xD000) &&
+               end - ram_obs[i].addr < RAM_MAXBLOCK) {
+            end += ram_obs[j].len;
+            j++;
+        }
+        blocks[nblocks].o = ram_obs + i;
+        blocks[nblocks].n = j - i;
+        blocks[nblocks].start = ram_obs[i].addr;
+        blocks[nblocks].len = end - ram_obs[i].addr;
+        nblocks++;
+        i = j;
+    }
+
+    if (!nblocks) {
+        fprintf(f, "RecompFn ram_lookup(GB *g, u16 pc)\n{\n    (void)g;\n    (void)pc;\n    return NULL;\n}\n");
+        fclose(f);
+        free(blocks);
+        return;
+    }
+    printf("código en WRAM/HRAM aprendido de la traza: %zu instrucciones en %zu bloques", n_ram_obs, nblocks);
+    if (conflicts) printf(" (%zu direcciones descartadas por bytes distintos)", conflicts);
+    printf("\n");
+
+    fprintf(f,
+        "static int ram_match(GB *g, unsigned start, const u8 *bytes, unsigned len)\n"
+        "{\n"
+        "    const u8 *p;\n"
+        "    if (start >= 0xFF80) p = g->hram + (start - 0xFF80);\n"
+        "    else if (start < 0xD000) p = g->wram + (start - 0xC000);\n"
+        "    else p = g->wram + g->wram_bank * 0x1000 + (start - 0xD000);\n"
+        "    return memcmp(p, bytes, len) == 0;\n"
+        "}\n\n");
+
+    for (size_t bi = 0; bi < nblocks; bi++) emit_ram_block(f, bi, &blocks[bi]);
+
+    fprintf(f, "static const struct { u16 start; u16 len; const u8 *bytes; RecompFn fn; } ram_blocks[%zu] = {\n", nblocks);
+    for (size_t bi = 0; bi < nblocks; bi++)
+        fprintf(f, "    { 0x%04X, %u, ram_b%zu_bytes, ram_b%zu },\n", blocks[bi].start, blocks[bi].len, bi, bi);
+    fprintf(f, "};\n\n");
+
+    fprintf(f, "RecompFn ram_lookup(GB *g, u16 pc)\n{\n    unsigned b;\n    switch (pc) {\n");
+    for (size_t bi = 0; bi < nblocks; bi++) {
+        for (size_t i = 0; i < blocks[bi].n; i++)
+            fprintf(f, "%s    case 0x%04X:", i % 8 ? "" : "\n", blocks[bi].o[i].addr);
+        fprintf(f, "\n        b = %zu;\n        break;", bi);
+    }
+    fprintf(f,
+        "\n    default:\n"
+        "        return NULL;\n"
+        "    }\n"
+        "    return ram_match(g, ram_blocks[b].start, ram_blocks[b].bytes, ram_blocks[b].len) ? ram_blocks[b].fn : NULL;\n"
+        "}\n");
+    fclose(f);
+    free(blocks);
+}
+
 /* Tablas del despachador: banco → página de 256 bytes → función por dirección */
 static void emit_dispatch(const char *dir)
 {
@@ -1988,13 +2191,17 @@ static void emit_dispatch(const char *dir)
     }
     fprintf(f, "};\n\n");
 
-    fprintf(f, "RecompFn hram_lookup(GB *g, u16 pc);\n\n");
+    fprintf(f, "RecompFn hram_lookup(GB *g, u16 pc);\nRecompFn ram_lookup(GB *g, u16 pc);\n\n");
     fprintf(f,
         "RecompFn recomp_lookup(GB *g, u16 pc)\n"
         "{\n"
         "    const RecompFn *const *table;\n"
         "    u32 off;\n"
-        "    if (pc >= 0xFF80 && pc < 0xFFFF) return hram_lookup(g, pc);\n"
+        "    if (pc >= 0xFF80 && pc < 0xFFFF) {\n"
+        "        RecompFn f = hram_lookup(g, pc);\n"
+        "        return f ? f : ram_lookup(g, pc);\n"
+        "    }\n"
+        "    if (pc >= 0xC000 && pc < 0xE000) return ram_lookup(g, pc);\n"
         "    /* El código de cada banco se compiló para su región: el banco 0 en\n"
         "     * $0000-$3FFF y los demás en $4000-$7FFF */\n"
         "    if (pc < 0x4000) {\n"
@@ -2508,6 +2715,7 @@ int main(int argc, char **argv)
 
     emit_code(out);
     emit_hram(out);
+    emit_ram(out);
     emit_dispatch(out);
     emit_info(out, sha1, title, exe_name, ninsns);
     emit_makefile(out, exe_name);

@@ -64,10 +64,11 @@ static void top_insert(Hit *top, unsigned *ntop, Hit h)
     top[i] = h;
 }
 
-/* Instrucciones del intérprete fuera de la ROM ($8000-$FFFF): cuántas veces y los
- * bytes que había en esa dirección la primera vez, para reconocer la rutina */
+/* Instrucciones del intérprete fuera de la ROM ($8000-$FFFF): cuántas veces, los bytes
+ * que había en esa dirección la primera vez (para reconocer la rutina) y si esos bytes
+ * cambiaron en alguna ejecución posterior (código que se modifica o se reemplaza) */
 #define RAM_BYTES 8
-typedef struct { u32 n; u8 bytes[RAM_BYTES]; } RamHit;
+typedef struct { u32 n; u8 bytes[RAM_BYTES]; u8 changed; } RamHit;
 static RamHit ram_hits[0x8000];
 
 /* --- Bytes de ROM ejecutados (por la máquina de referencia) --- */
@@ -120,8 +121,13 @@ static void count_interp(GB *g)
     else if (pc < 0x8000) { bank = g->mbc.bankx; off = (u16)(pc - 0x4000); }
     else {
         RamHit *h = &ram_hits[pc - 0x8000];
-        if (!h->n)
+        if (!h->n) {
             for (unsigned i = 0; i < RAM_BYTES; i++) h->bytes[i] = gb_peek(g, (u16)(pc + i));
+        } else if (!h->changed) {
+            int len = insn_length(h->bytes[0]);
+            for (int i = 0; i < len; i++)
+                if (gb_peek(g, (u16)(pc + i)) != h->bytes[i]) h->changed = 1;
+        }
         h->n++;
         return;
     }
@@ -498,6 +504,26 @@ int main(int argc, char **argv)
             top_insert(top, &ntop, h);
         }
     }
+    /* Código que corrió desde WRAM ($C000-$DFFF) o HRAM ($FF80-$FFFE) y no cambió entre
+     * ejecuciones: líneas "ram DIRECCION BYTES" (los de la instrucción) para gbrecomp --trace.
+     * El lector común de trazas las ignora porque no empiezan con un dígito hexadecimal */
+    unsigned ram_stable = 0, ram_unstable = 0;
+    for (u32 a = 0xC000; a < 0x10000; a++) {
+        if (a >= 0xE000 && a < 0xFF80) continue;
+        if (a == 0xFFFF) continue;
+        const RamHit *h = &ram_hits[a - 0x8000];
+        if (!h->n) continue;
+        if (h->changed) {
+            ram_unstable++;
+            continue;
+        }
+        ram_stable++;
+        if (!uf) continue;
+        int len = insn_length(h->bytes[0]);
+        fprintf(uf, "ram %04X", a);
+        for (int i = 0; i < len; i++) fprintf(uf, " %02X", h->bytes[i]);
+        fprintf(uf, "\n");
+    }
     if (uf) fclose(uf);
     if (ntop) printf("Las más ejecutadas por el intérprete:\n");
     for (unsigned i = 0; i < ntop; i++)
@@ -532,6 +558,9 @@ int main(int argc, char **argv)
     }
     if (distinct) printf("Direcciones de ROM interpretadas: %u\n", distinct);
     if (rdistinct) printf("Direcciones de RAM interpretadas: %u\n", rdistinct);
+    if (ram_stable || ram_unstable)
+        printf("Código en WRAM/HRAM: %u instrucciones estables, %u que cambian entre ejecuciones\n",
+               ram_stable, ram_unstable);
 
     if (save_out && !gb_save_write(&rec, save_out, 0))
         fprintf(stderr, "no se pudo escribir %s\n", save_out);
