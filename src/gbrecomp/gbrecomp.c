@@ -1619,28 +1619,51 @@ static void emit_code(const char *dir)
 
 /* Rutinas de DMA de OAM: el juego las copia a HRAM y las ejecuta desde ahí, porque
  * mientras el DMA corre solo se puede leer HRAM. Su dirección en HRAM no se conoce al
- * generar, así que se compila una vez por cada dirección posible. Dos variantes:
- *   con origen: ld a,$C0 / ldh ($46),a / ld a,$28 / dec a / jr nz / ret
- *   sin origen: ldh ($46),a / ld a,$28 / dec a / jr nz / ret (el llamador pone A)
- * La segunda es el final de la primera; va después, y su aparición dentro de la
- * primera no cuenta (ver emit_hram). */
+ * generar, así que se compila una vez por cada dirección posible.
+ *
+ * Los moldes dan la forma de la rutina; los bytes concretos (el byte alto del origen,
+ * el contador del bucle) se toman de la ROM. En ejecución solo se usa el código
+ * compilado si los bytes de HRAM coinciden exactamente con una variante encontrada,
+ * así que un molde laxo no arriesga nada: lo peor es compilar una variante que no se
+ * usa. Una variante que aparece al final de otra más larga no cuenta por separado. */
+#define HRAM_MAXLEN 16
+#define HRAM_MAXSIGS 4        /* variantes que se compilan por juego */
+#define HRAM_MAXCANDS 16      /* variantes distintas que se consideran */
+#define HRAM_MAXOCCS 256      /* apariciones que se recuerdan */
+
 typedef struct {
-    const char *name;      /* prefijo de funciones y tablas en gen/hram.c */
+    char name[8];          /* prefijo de funciones y tablas en gen/hram.c */
     u8 len;
-    u8 bytes[10];
+    u8 bytes[HRAM_MAXLEN];
 } HramSig;
 
-static const HramSig hram_sigs[] = {
-    { "dma_c0", 10, { 0x3E, 0xC0, 0xE0, 0x46, 0x3E, 0x28, 0x3D, 0x20, 0xFD, 0xC9 } },
-    { "dma", 8, { 0xE0, 0x46, 0x3E, 0x28, 0x3D, 0x20, 0xFD, 0xC9 } },
+typedef struct {
+    u8 len;
+    u8 bytes[HRAM_MAXLEN];
+    u8 any[HRAM_MAXLEN];   /* 1 = cualquier valor en esa posición */
+} HramTemplate;
+
+static const HramTemplate hram_templates[] = {
+    /* ld a,N / ldh ($46),a / ld a,M / dec a / jr nz / ret: la rutina lleva su origen */
+    { 10, { 0x3E, 0, 0xE0, 0x46, 0x3E, 0, 0x3D, 0x20, 0xFD, 0xC9 },
+          { 0, 1, 0, 0, 0, 1, 0, 0, 0, 0 } },
+    /* ldh ($46),a / ld a,M / dec a / jr nz / ret: el llamador pone A */
+    { 8, { 0xE0, 0x46, 0x3E, 0, 0x3D, 0x20, 0xFD, 0xC9 },
+         { 0, 0, 0, 1, 0, 0, 0, 0 } },
+    /* como la primera, con cuatro nop antes del ret */
+    { 14, { 0x3E, 0, 0xE0, 0x46, 0x3E, 0, 0x3D, 0x20, 0xFD, 0, 0, 0, 0, 0xC9 },
+          { 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0 } },
 };
-#define NSIGS (sizeof hram_sigs / sizeof hram_sigs[0])
+
+static HramSig hram_sigs[HRAM_MAXSIGS];
+static unsigned n_hram_sigs;
+
 #define HRAM_LO 0xFF80u
 #define HRAM_LAST 0xFFFEu  /* último byte de HRAM antes de IE (FFFF) */
 
 typedef struct {
-    unsigned base;         /* dirección en HRAM de la copia que se está emitiendo */
-    unsigned starts[10];   /* desplazamientos de inicio de instrucción dentro de la rutina */
+    unsigned base;                  /* dirección en HRAM de la copia que se está emitiendo */
+    unsigned starts[HRAM_MAXLEN];   /* desplazamientos de inicio de instrucción en la rutina */
     unsigned nstarts;
 } HramRoutine;
 
@@ -1660,9 +1683,9 @@ static void hram_jump(Emit *e, const char *expr, int is_const, uint16_t target)
 }
 
 /* Inicios de instrucción de una variante, decodificados una vez */
-static unsigned hram_starts(const HramSig *s, unsigned starts[10])
+static unsigned hram_starts(const HramSig *s, unsigned starts[HRAM_MAXLEN])
 {
-    u8 pad[13] = { 0 };    /* 3 bytes de margen para decodificar la última instrucción */
+    u8 pad[HRAM_MAXLEN + 3] = { 0 };    /* 3 bytes de margen para decodificar la última instrucción */
     memcpy(pad, s->bytes, s->len);
     unsigned n = 0;
     for (unsigned off = 0; off < s->len;) {
@@ -1674,19 +1697,68 @@ static unsigned hram_starts(const HramSig *s, unsigned starts[10])
     return n;
 }
 
-static int hram_match(const HramSig *s, size_t p)
+/* Busca en la ROM lo que casa con algún molde y se queda con las variantes concretas,
+ * de la más larga a la más corta, sin las que solo aparecen al final de otra */
+static void find_hram_sigs(void)
 {
-    return p + s->len <= rom_size && memcmp(rom + p, s->bytes, s->len) == 0;
-}
+    HramSig cand[HRAM_MAXCANDS];
+    struct { unsigned cand; size_t pos; } occ[HRAM_MAXOCCS];
+    unsigned ncand = 0, nocc = 0;
 
-/* ¿La aparición de la variante i en p está dentro de una más larga (las anteriores)? */
-static int hram_covered(unsigned i, size_t p)
-{
-    for (unsigned j = 0; j < i; j++) {
-        unsigned d = hram_sigs[j].len - hram_sigs[i].len;
-        if (p >= d && hram_match(&hram_sigs[j], p - d)) return 1;
+    for (unsigned t = 0; t < sizeof hram_templates / sizeof hram_templates[0]; t++) {
+        const HramTemplate *tp = &hram_templates[t];
+        for (size_t p = 0; p + tp->len <= rom_size; p++) {
+            unsigned k = 0;
+            while (k < tp->len && (tp->any[k] || rom[p + k] == tp->bytes[k])) k++;
+            if (k < tp->len) continue;
+
+            unsigned c = 0;
+            while (c < ncand && !(cand[c].len == tp->len && memcmp(cand[c].bytes, rom + p, tp->len) == 0)) c++;
+            if (c == ncand) {
+                if (ncand == HRAM_MAXCANDS) continue;
+                cand[ncand].len = tp->len;
+                memcpy(cand[ncand].bytes, rom + p, tp->len);
+                ncand++;
+            }
+            if (nocc < HRAM_MAXOCCS) {
+                occ[nocc].cand = c;
+                occ[nocc].pos = p;
+                nocc++;
+            }
+        }
     }
-    return 0;
+
+    unsigned order[HRAM_MAXCANDS];    /* candidatas de la más larga a la más corta */
+    for (unsigned i = 0; i < ncand; i++) {
+        unsigned j = i;
+        while (j > 0 && cand[order[j - 1]].len < cand[i].len) {
+            order[j] = order[j - 1];
+            j--;
+        }
+        order[j] = i;
+    }
+
+    for (unsigned oi = 0; oi < ncand && n_hram_sigs < HRAM_MAXSIGS; oi++) {
+        const HramSig *cs = &cand[order[oi]];
+        int standalone = 0;
+        for (unsigned o = 0; o < nocc && !standalone; o++) {
+            if (occ[o].cand != order[oi]) continue;
+            /* ¿Está dentro de otra más larga que termina en el mismo byte? */
+            int covered = 0;
+            for (unsigned q = 0; q < nocc && !covered; q++) {
+                unsigned lq = cand[occ[q].cand].len;
+                covered = lq > cs->len && occ[o].pos >= lq - cs->len &&
+                          occ[q].pos == occ[o].pos - (lq - cs->len);
+            }
+            standalone = !covered;
+        }
+        if (!standalone) continue;
+        HramSig *s = &hram_sigs[n_hram_sigs];
+        snprintf(s->name, sizeof s->name, "d%u", n_hram_sigs);
+        s->len = cs->len;
+        memcpy(s->bytes, cs->bytes, cs->len);
+        n_hram_sigs++;
+    }
 }
 
 /* Una función por dirección de HRAM donde puede empezar la copia, y sus tablas */
@@ -1695,7 +1767,7 @@ static void emit_hram_sig(FILE *f, const HramSig *s)
     HramRoutine r = { 0 };
     r.nstarts = hram_starts(s, r.starts);
     unsigned hi = HRAM_LAST - (s->len - 1);
-    u8 pad[13] = { 0 };
+    u8 pad[HRAM_MAXLEN + 3] = { 0 };
     memcpy(pad, s->bytes, s->len);
 
     fprintf(f, "static const u8 hram_%s_bytes[%u] = {", s->name, (unsigned)s->len);
@@ -1753,23 +1825,20 @@ static void emit_hram(const char *dir)
     FILE *f = open_out(dir, "gen/hram.c");
     fprintf(f, "/* Generado por gbrecomp: no editar. */\n#include \"recomp.h\"\n#include <string.h>\n\n");
 
-    int present[NSIGS] = { 0 };
-    int any = 0;
-    for (unsigned i = 0; i < NSIGS; i++) {
-        for (size_t p = 0; p < rom_size && !present[i]; p++)
-            present[i] = hram_match(&hram_sigs[i], p) && !hram_covered(i, p);
-        if (present[i]) printf("rutina de DMA en HRAM: variante de %u bytes\n", (unsigned)hram_sigs[i].len);
-        any |= present[i];
-    }
-    if (!any) {
+    find_hram_sigs();
+    if (!n_hram_sigs) {
         printf("rutina de DMA en HRAM: no\n");
         fprintf(f, "RecompFn hram_lookup(GB *g, u16 pc)\n{\n    (void)g;\n    (void)pc;\n    return NULL;\n}\n");
         fclose(f);
         return;
     }
 
-    for (unsigned i = 0; i < NSIGS; i++)
-        if (present[i]) emit_hram_sig(f, &hram_sigs[i]);
+    for (unsigned i = 0; i < n_hram_sigs; i++) {
+        printf("rutina de DMA en HRAM:");
+        for (unsigned k = 0; k < hram_sigs[i].len; k++) printf(" %02X", hram_sigs[i].bytes[k]);
+        printf("\n");
+        emit_hram_sig(f, &hram_sigs[i]);
+    }
 
     /* La copia empieza en pc - inicio: se usa solo si esos bytes de HRAM siguen siendo
      * los reconocidos, así que una copia distinta cae al intérprete */
@@ -1785,10 +1854,9 @@ static void emit_hram(const char *dir)
         "    return NULL;\n"
         "}\n\n");
     fprintf(f, "RecompFn hram_lookup(GB *g, u16 pc)\n{\n    RecompFn fn;\n");
-    for (unsigned i = 0; i < NSIGS; i++) {
-        if (!present[i]) continue;
+    for (unsigned i = 0; i < n_hram_sigs; i++) {
         const HramSig *s = &hram_sigs[i];
-        unsigned starts[10];
+        unsigned starts[HRAM_MAXLEN];
         unsigned n = hram_starts(s, starts);
         fprintf(f,
             "    fn = hram_find(g, pc, hram_%s_bytes, %u, hram_%s_starts, %u, hram_%s_fns, 0x%04X);\n"
