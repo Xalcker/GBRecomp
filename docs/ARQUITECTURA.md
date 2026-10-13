@@ -432,7 +432,7 @@ Cada juego compila solo el código de RAM que su traza trae; sin líneas `ram`, 
 ### Proyecto generado
 
 ```
-gbrecomp juego.gb -o salida/ [--trace traza.txt] [--name nombre] [--viz] [--events archivo]
+gbrecomp juego.gb -o salida/ [--trace traza.txt]... [--name nombre] [--viz] [--events archivo]
          [--coverage archivo] [--why BB:AAAA]
 cd salida && make
 ./nombre rom.gb          # el juego (SDL2); valida el SHA1 de la ROM
@@ -840,7 +840,7 @@ hasta que se sueltan (si no, el Enter que cerró el diálogo llegaría como Star
     además crea el release con los paquetes de los tres sistemas.
 
 Probado a mano en Windows (MSYS2) y Linux (Ubuntu en WSL): la batería daba 130
-de 130 en ambos (hoy son 140, con `sgb_controles`, los proyectos generados, `--html`, `gbramdump` y la ventana de `gb`), y los proyectos de Tetris, Pokémon Rojo y Pokémon Oro
+de 130 en ambos (hoy son 141, con `sgb_controles`, los proyectos generados, `--html`, `gbramdump` y la ventana de `gb`), y los proyectos de Tetris, Pokémon Rojo y Pokémon Oro
 compilan sin advertencias y corren sin diferencias.
 
 ### Prueba diferencial
@@ -890,7 +890,7 @@ cambian demasiado.
 
 ## Estado de la validación
 
-`sh tests/run_tests.sh`: **140 de 140** (DMG, más las de CGB, compatibilidad y SGB que ya pasan,
+`sh tests/run_tests.sh`: **141 de 141** (DMG, más las de CGB, compatibilidad y SGB que ya pasan,
 `sgb_controles`, que lee los controles 2 a 4 del SGB como un juego, el proyecto generado de `cpu_instrs`
 comparado contra el intérprete con `difftest`, los de `firstwhite` y `strikethrough`, que copian la
 rutina de DMA de OAM a HRAM y no deben pasar por el intérprete, `ei_di`, una ROM mínima que
@@ -898,7 +898,8 @@ repite `ei` / `di` y comprueba que el código recompilado no atiende una interru
 instrucción que sigue a `ei`, y dos del código aprendido en WRAM: una ROM mínima que copia una
 rutina a `$C000` y parcha un operando de ella, y `interrupt_time` de Blargg, que ejecuta unas 600
 instrucciones distintas desde WRAM; en las dos, la primera ronda interpreta ese código y la
-segunda, con la traza que deja, no interpreta ninguna).
+segunda, con la traza que deja, no interpreta ninguna; y una de `gbrecomp` con dos `--trace`, una de
+código de RAM y otra de ROM, que comprueba que se leen las dos).
 
 - Blargg: `cpu_instrs` (las 11 y la combinada), `instr_timing`, `mem_timing`,
   `mem_timing-2` y `halt_bug`. No hay un equivalente de `nestest` de NESRecomp
