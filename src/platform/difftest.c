@@ -51,6 +51,25 @@ static int hit_before(const Hit *a, const Hit *b)
     return a->addr < b->addr;
 }
 
+/* Mete h en el top (ordenado, de a lo más TOP_HITS entradas) si le toca */
+static void top_insert(Hit *top, unsigned *ntop, Hit h)
+{
+    if (*ntop < TOP_HITS) (*ntop)++;
+    else if (!hit_before(&h, &top[TOP_HITS - 1])) return;
+    unsigned i = *ntop - 1;
+    while (i > 0 && hit_before(&h, &top[i - 1])) {
+        top[i] = top[i - 1];
+        i--;
+    }
+    top[i] = h;
+}
+
+/* Instrucciones del intérprete fuera de la ROM ($8000-$FFFF): cuántas veces y los
+ * bytes que había en esa dirección la primera vez, para reconocer la rutina */
+#define RAM_BYTES 8
+typedef struct { u32 n; u8 bytes[RAM_BYTES]; } RamHit;
+static RamHit ram_hits[0x8000];
+
 /* --- Bytes de ROM ejecutados (por la máquina de referencia) --- */
 
 static u8 *executed[MAX_BANKS];
@@ -99,7 +118,13 @@ static void count_interp(GB *g)
     interp_zone[pc < 0x8000 ? 0 : pc < 0xC000 ? 1 : pc < 0xFF80 ? 2 : 3]++;
     if (pc < 0x4000) { bank = g->mbc.bank0; off = pc; }
     else if (pc < 0x8000) { bank = g->mbc.bankx; off = (u16)(pc - 0x4000); }
-    else return;
+    else {
+        RamHit *h = &ram_hits[pc - 0x8000];
+        if (!h->n)
+            for (unsigned i = 0; i < RAM_BYTES; i++) h->bytes[i] = gb_peek(g, (u16)(pc + i));
+        h->n++;
+        return;
+    }
     if (bank >= MAX_BANKS) return;
     if (!interp_hits[bank]) interp_hits[bank] = calloc(0x4000, sizeof(u32));
     interp_hits[bank][off]++;
@@ -470,20 +495,29 @@ int main(int argc, char **argv)
             distinct++;
             if (uf) fprintf(uf, "%02X:%04X\n", b, addr);
             Hit h = { b, addr, interp_hits[b][off] };
-            if (ntop < TOP_HITS) ntop++;
-            else if (!hit_before(&h, &top[TOP_HITS - 1])) continue;
-            unsigned i = ntop - 1;
-            while (i > 0 && hit_before(&h, &top[i - 1])) {
-                top[i] = top[i - 1];
-                i--;
-            }
-            top[i] = h;
+            top_insert(top, &ntop, h);
         }
     }
     if (uf) fclose(uf);
     if (ntop) printf("Las más ejecutadas por el intérprete:\n");
     for (unsigned i = 0; i < ntop; i++)
         printf("  interpretada en ROM: %02X:%04X (%u veces)\n", top[i].bank, top[i].addr, top[i].n);
+
+    /* Lo que el intérprete ejecutó en RAM (HRAM, WRAM...): dirección, veces y bytes */
+    Hit rtop[TOP_HITS];
+    unsigned nrtop = 0, rdistinct = 0;
+    for (u32 a = 0x8000; a < 0x10000; a++) {
+        if (!ram_hits[a - 0x8000].n) continue;
+        rdistinct++;
+        Hit h = { 0, (u16)a, ram_hits[a - 0x8000].n };
+        top_insert(rtop, &nrtop, h);
+    }
+    if (nrtop) printf("Las más ejecutadas en RAM:\n");
+    for (unsigned i = 0; i < nrtop; i++) {
+        printf("  interpretada en RAM: %04X (%u veces), bytes:", rtop[i].addr, rtop[i].n);
+        for (unsigned k = 0; k < RAM_BYTES; k++) printf(" %02X", ram_hits[rtop[i].addr - 0x8000].bytes[k]);
+        printf("\n");
+    }
 
     if (executed_path) {
         /* Mismo formato que gbrecomp --codemap: C = ejecutado */
@@ -497,6 +531,7 @@ int main(int argc, char **argv)
         if (ef) fclose(ef);
     }
     if (distinct) printf("Direcciones de ROM interpretadas: %u\n", distinct);
+    if (rdistinct) printf("Direcciones de RAM interpretadas: %u\n", rdistinct);
 
     if (save_out && !gb_save_write(&rec, save_out, 0))
         fprintf(stderr, "no se pudo escribir %s\n", save_out);
