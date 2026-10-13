@@ -39,6 +39,18 @@ static GB rec, ref, snap_rec, snap_ref;
 #define MAX_BANKS 512
 static u32 *interp_hits[MAX_BANKS];
 
+/* Direcciones más ejecutadas por el intérprete, para mostrarlas en el log */
+#define TOP_HITS 20
+typedef struct { u32 bank; u16 addr; u32 n; } Hit;
+
+/* Orden del top: más ejecuciones primero; en empate, la de menor dirección */
+static int hit_before(const Hit *a, const Hit *b)
+{
+    if (a->n != b->n) return a->n > b->n;
+    if (a->bank != b->bank) return a->bank < b->bank;
+    return a->addr < b->addr;
+}
+
 /* --- Bytes de ROM ejecutados (por la máquina de referencia) --- */
 
 static u8 *executed[MAX_BANKS];
@@ -445,8 +457,10 @@ int main(int argc, char **argv)
                100.0 * interp_zone[0] / rec.instr_interp, 100.0 * interp_zone[1] / rec.instr_interp,
                100.0 * interp_zone[2] / rec.instr_interp, 100.0 * interp_zone[3] / rec.instr_interp);
 
-    /* Direcciones de ROM más ejecutadas por el intérprete */
-    unsigned shown = 0, distinct = 0;
+    /* El archivo de --uncovered va en orden de dirección (gbrecomp --trace no depende
+     * del orden); el log muestra las TOP_HITS direcciones más ejecutadas */
+    Hit top[TOP_HITS];
+    unsigned ntop = 0, distinct = 0;
     FILE *uf = uncovered ? fopen(uncovered, "w") : NULL;
     for (u32 b = 0; b < MAX_BANKS; b++) {
         if (!interp_hits[b]) continue;
@@ -455,13 +469,21 @@ int main(int argc, char **argv)
             u16 addr = (u16)(b == 0 ? off : 0x4000 + off);
             distinct++;
             if (uf) fprintf(uf, "%02X:%04X\n", b, addr);
-            if (shown < 10) {
-                printf("  interpretada en ROM: %02X:%04X (%u veces)\n", b, addr, interp_hits[b][off]);
-                shown++;
+            Hit h = { b, addr, interp_hits[b][off] };
+            if (ntop < TOP_HITS) ntop++;
+            else if (!hit_before(&h, &top[TOP_HITS - 1])) continue;
+            unsigned i = ntop - 1;
+            while (i > 0 && hit_before(&h, &top[i - 1])) {
+                top[i] = top[i - 1];
+                i--;
             }
+            top[i] = h;
         }
     }
     if (uf) fclose(uf);
+    if (ntop) printf("Las más ejecutadas por el intérprete:\n");
+    for (unsigned i = 0; i < ntop; i++)
+        printf("  interpretada en ROM: %02X:%04X (%u veces)\n", top[i].bank, top[i].addr, top[i].n);
 
     if (executed_path) {
         /* Mismo formato que gbrecomp --codemap: C = ejecutado */
