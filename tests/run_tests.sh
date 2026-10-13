@@ -242,6 +242,18 @@ if [ -x ./gbrecomp$EXE ] && { [ -z "$FILTRO" ] || case "recomp" in *"$FILTRO"*) 
   código en WRAM anotado por el ejecutable (--uncovered): $(grep '^ram ' build/wram_gb.trace 2>/dev/null | head -3)"
         fi
     fi
+    # Y gbtrace, la traza guionada con la que empieza tests/recomp_game.sh: las mismas líneas también
+    if [ -x ./gbtrace$EXE ]; then
+        if ./gbtrace$EXE "$rom" build/wram_gbtrace.txt --frames 120 > /tmp/gbtest.out 2>&1 \
+            && [ -n "$(grep '^ram ' build/wram_gbtrace.txt)" ] \
+            && [ "$(grep '^ram ' build/wram_gbtrace.txt | sort -u)" = "$(grep '^ram ' build/wram_codigo.unc | sort -u)" ]; then
+            pasa=$((pasa + 1))
+        else
+            falla=$((falla + 1))
+            fallidas="$fallidas
+  código en WRAM anotado por gbtrace: $(grep '^ram ' build/wram_gbtrace.txt 2>/dev/null | head -3)"
+        fi
+    fi
     # Un caso real: interrupt_time, de Blargg, ejecuta desde WRAM unas 600 instrucciones distintas
     rom="$T/blargg/interrupt_time/interrupt_time.gb"
     if ciclo_ram "$rom" interrupt_time 600; then

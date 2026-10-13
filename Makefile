@@ -50,7 +50,7 @@ gbbench$(EXE): src/tools/gbbench.c src/platform/inputs.h $(BUILD)/libgbrt.a
 	$(CC) $(CFLAGS) -Isrc/runtime -o $@ src/tools/gbbench.c $(BUILD)/libgbrt.a
 
 # Herramientas sin ventana con las mismas opciones que las de NESRecomp (--frames, --input, --seed, --model)
-gbtrace$(EXE): src/tools/gbtrace.c src/tools/cli.h src/platform/random_pad.h src/platform/inputs.h $(BUILD)/libgbrt.a
+gbtrace$(EXE): src/tools/gbtrace.c src/tools/cli.h src/platform/random_pad.h src/platform/inputs.h src/platform/ramtrace.h $(BUILD)/libgbrt.a
 	$(CC) $(CFLAGS) -Isrc/runtime -o $@ src/tools/gbtrace.c $(BUILD)/libgbrt.a
 
 # RAM de trabajo tras correr la ROM (el equivalente de ramdump de NESRecomp)

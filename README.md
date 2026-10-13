@@ -310,7 +310,7 @@ salida no sea una terminal (la GUI lo usa), sin animación.
 `--frames N`, `--input archivo`, `--seed S`, `--model dmg|cgb|sgb`):
 
 ```
-gbtrace rom.gb traza.txt --frames 3000 --input tests/inputs/partida1.txt   # direcciones de ROM ejecutadas (formato BB:AAAA)
+gbtrace rom.gb traza.txt --frames 3000 --input tests/inputs/partida1.txt   # direcciones de ROM ejecutadas (BB:AAAA) y código de WRAM/HRAM (ram ...)
 gbshot  rom.gb captura.png --frames 900 --input tests/inputs/partida1.txt
 gbaudio rom.gb audio.wav   --frames 600 --seed 3                            # WAV estéreo y nivel por segundo
 gbramdump rom.gb          --frames 600 --input partida.txt                 # WRAM y HRAM (como ramdump de NES)
@@ -390,7 +390,7 @@ y `--forget-rom`. Para pruebas sin ventana: `--ui-shot archivo.png` con
 ## Estado
 
 **Pruebas de hardware** (`make test`, con las ROMs de prueba de `make testroms`):
-141 de 141.
+142 de 142.
 - Blargg `cpu_instrs`, `instr_timing`, `mem_timing` y `halt_bug`.
 - Todas las de aceptación de Mooneye para DMG, más las de MBC1/2/5, las de
   arranque de GBC y SGB, y `dmg-acid2` y `cgb-acid2` (pantalla idéntica).
@@ -406,7 +406,8 @@ y `--forget-rom`. Para pruebas sin ventana: `--ui-shot archivo.png` con
   cambia) y de `interrupt_time`, de Blargg, que ejecuta unas 600 instrucciones distintas desde WRAM: la
   primera ronda las interpreta, con la traza que deja se compilan, y la segunda no interpreta ninguna
   y `difftest` no encuentra diferencias.
-- El ejecutable (`gb`) con `--uncovered` anota el mismo código de RAM que `difftest` en la ROM mínima.
+- El ejecutable (`gb`) con `--uncovered` y `gbtrace` anotan el mismo código de RAM que `difftest` en la
+  ROM mínima.
 - `gbrecomp --html`, `--viz --color` y `--codemap`, `gbramdump` y la ventana de `gb` (cada menú, con `--ui-shot`).
 
 Además, Mealybug Tearoom pasa 18 de 24 (`tests/run_mealybug.sh`) y Blargg

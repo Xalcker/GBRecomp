@@ -376,13 +376,13 @@ pasaban millones de instrucciones por el intérprete solo por esto (Gex: 6.7 mil
 que interpretaba). `gbrecomp` no puede deducir ese código, pero el intérprete lo ve ejecutarse. El
 ciclo de trazas lo aprende:
 
-1. `difftest --uncovered archivo` y el ejecutable del juego con `--uncovered archivo` (los dos con el
-   mismo módulo, `src/platform/ramtrace.h`) anotan, por cada dirección de WRAM o HRAM que ejecutó el
-   intérprete, los bytes de la instrucción: hasta 4 versiones por dirección (las distingue el opcode;
-   en `jr` y los `CB`, también el segundo byte) y qué bytes de operando cambiaron entre una ejecución y
-   otra. Salen como líneas `ram DIRECCIÓN B0 [B1 B2]`, con `??` en los operandos variables. Las demás
-   líneas del archivo siguen siendo `BB:AAAA`, y los lectores anteriores ignoran las de RAM porque no
-   empiezan con un dígito hexadecimal.
+1. `difftest --uncovered archivo`, el ejecutable del juego con `--uncovered archivo` y `gbtrace` (los
+   tres con el mismo módulo, `src/platform/ramtrace.h`) anotan, por cada dirección de WRAM o HRAM que
+   ejecutó el intérprete, los bytes de la instrucción: hasta 4 versiones por dirección (las distingue
+   el opcode; en `jr` y los `CB`, también el segundo byte) y qué bytes de operando cambiaron entre una
+   ejecución y otra. Salen como líneas `ram DIRECCIÓN B0 [B1 B2]`, con `??` en los operandos
+   variables. Las demás líneas del archivo siguen siendo `BB:AAAA`, y los lectores anteriores ignoran
+   las de RAM porque no empiezan con un dígito hexadecimal.
 2. `gbrecomp --trace` las lee, une las que son la misma instrucción vista en corridas distintas
    (el operando que difiere pasa a ser variable) y descarta las direcciones con más de 8 versiones,
    que son código que el juego genera con estructuras distintas cada vez.
@@ -449,8 +449,8 @@ y lo que falta se completa jugando con `--uncovered` y recompilando con esa traz
 solo anotara la ROM, jugar completaría la ROM y perdería justo lo único que no se puede deducir, el
 código de RAM. Con el mismo módulo en las dos herramientas, cualquier sesión (aleatoria, guionada,
 grabada con `--record` o jugada a mano) alimenta el mismo ciclo y escribe las mismas líneas; una
-prueba lo comprueba con la ROM mínima. `gbtrace`, la traza guionada de `tests/recomp_game.sh`, todavía
-anota solo la ROM: con `ramtrace.h` sería una llamada más.
+prueba lo comprueba con la ROM mínima. También lo anota `gbtrace`, la traza guionada con la que
+empieza `tests/recomp_game.sh`: el ciclo aprende el código de RAM desde la primera ronda.
 
 **Qué hay que replicar en otra consola** (la idea no depende del SM83):
 
@@ -892,7 +892,7 @@ hasta que se sueltan (si no, el Enter que cerró el diálogo llegaría como Star
     además crea el release con los paquetes de los tres sistemas.
 
 Probado a mano en Windows (MSYS2) y Linux (Ubuntu en WSL): la batería daba 130
-de 130 en ambos (hoy son 141, con `sgb_controles`, los proyectos generados, `--html`, `gbramdump` y la ventana de `gb`), y los proyectos de Tetris, Pokémon Rojo y Pokémon Oro
+de 130 en ambos (hoy son 142, con `sgb_controles`, los proyectos generados, `--html`, `gbramdump` y la ventana de `gb`), y los proyectos de Tetris, Pokémon Rojo y Pokémon Oro
 compilan sin advertencias y corren sin diferencias.
 
 ### Prueba diferencial
@@ -942,7 +942,7 @@ cambian demasiado.
 
 ## Estado de la validación
 
-`sh tests/run_tests.sh`: **141 de 141** (DMG, más las de CGB, compatibilidad y SGB que ya pasan,
+`sh tests/run_tests.sh`: **142 de 142** (DMG, más las de CGB, compatibilidad y SGB que ya pasan,
 `sgb_controles`, que lee los controles 2 a 4 del SGB como un juego, el proyecto generado de `cpu_instrs`
 comparado contra el intérprete con `difftest`, los de `firstwhite` y `strikethrough`, que copian la
 rutina de DMA de OAM a HRAM y no deben pasar por el intérprete, `ei_di`, una ROM mínima que
@@ -950,8 +950,9 @@ repite `ei` / `di` y comprueba que el código recompilado no atiende una interru
 instrucción que sigue a `ei`, y dos del código aprendido en WRAM: una ROM mínima que copia una
 rutina a `$C000` y parcha un operando de ella, y `interrupt_time` de Blargg, que ejecuta unas 600
 instrucciones distintas desde WRAM; en las dos, la primera ronda interpreta ese código y la
-segunda, con la traza que deja, no interpreta ninguna; y una más que comprueba que el ejecutable `gb`,
-al jugar con `--uncovered`, anota las mismas líneas de RAM que `difftest` en la ROM mínima).
+segunda, con la traza que deja, no interpreta ninguna; y dos más que comprueban que el ejecutable `gb`
+(al jugar con `--uncovered`) y `gbtrace` anotan las mismas líneas de RAM que `difftest` en la ROM
+mínima).
 
 - Blargg: `cpu_instrs` (las 11 y la combinada), `instr_timing`, `mem_timing`,
   `mem_timing-2` y `halt_bug`. No hay un equivalente de `nestest` de NESRecomp
