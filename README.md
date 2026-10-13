@@ -433,7 +433,7 @@ Ninguno tuvo diferencias. La cobertura sin traza varía entre 1 % y 99 % según
 qué tan indirecto es el código del juego (ver `docs/ARQUITECTURA.md`). Con el
 ciclo de trazas, los juegos revisados quedaron entre 97 % y 99.9 %.
 
-**Lista de compatibilidad** ([`docs/compat/index.html`](docs/compat/index.html)):
+**Lista de compatibilidad** ([`docs/compat-nointro/index.html`](docs/compat-nointro/index.html)):
 las 948 ROMs de las colecciones No-Intro de Game Boy y Game Boy Color, cada
 una con su captura, estado, MBC, consola y, para una selección por MBC y
 consola, el resultado del ciclo completo del recompilador y su velocidad.
@@ -447,8 +447,8 @@ GENRecomp y NEORecomp, `tools/retrorecomp/compat.py`; `run.py` solo dice lo prop
 Game Boy (cabecera, MBC soportados, cupo por MBC):
 
 ```
-python3 tools/compat/run.py "DIR/Nintendo - Game Boy" "DIR/Nintendo - Game Boy Color"
-python3 tools/compat/report.py     # escribe docs/compat/index.html
+python3 tools/compat/run.py "DIR/Nintendo - Game Boy" "DIR/Nintendo - Game Boy Color" --salida docs/compat-nointro
+python3 tools/compat/report.py --salida docs/compat-nointro     # escribe docs/compat-nointro/index.html
 ```
 
 - Etapa 1: corre cada ROM en el intérprete (`gbshot`) con entradas
@@ -461,9 +461,9 @@ python3 tools/compat/report.py     # escribe docs/compat/index.html
   etapa 2, por turnos entre MBC), `--lista ARCHIVO`, `--juego TEXTO` (solo
   esos juegos, y todos pasan a la etapa 2), `--categoria MBC5,MBC3`,
   `--hilos N`, `--salida DIR` y `--rehacer`.
-- Los resultados quedan en `docs/compat/results.json` (se guardan después de
+- Los resultados de la colección quedan en `docs/compat-nointro/results.json` (se guardan después de
   cada ROM: si la corrida se corta, la misma orden sigue donde iba) y las
-  capturas en `docs/compat/thumbs/`; las ROMs extraídas y los proyectos, en
+  capturas en `docs/compat-nointro/thumbs/` (sin `--salida`, en `docs/compat/`, para las ROMs de `roms/`); las ROMs extraídas y los proyectos, en
   `build/compat/` (los proyectos sin diferencias se borran).
 
 La integración continua compila, corre la batería y recompila una ROM de
