@@ -91,7 +91,7 @@ $(WINRES): src/platform/icono_gb.ico | $(BUILD)
 endif
 
 gb$(EXE): $(call plat,$(GB_SRC)) $(wildcard src/platform/*.h) $(BUILD)/libgbrt.a $(WINRES)
-	$(CC) $(CFLAGS) $(SDL_CFLAGS) -DGB_INTERP -Isrc/runtime -I$(SHARED) -Isrc/platform -o $@ \
+	$(CC) $(CFLAGS) -I$(SHARED) $(SDL_CFLAGS) -DGB_INTERP -Isrc/runtime -Isrc/platform -o $@ \
 		$(call plat,$(GB_SRC)) $(BUILD)/libgbrt.a $(WINRES) $(SDL_LIBS) -lm
 
 # Archivos que gbrecomp lleva adentro y escribe en cada proyecto generado
