@@ -2631,7 +2631,7 @@ static void emit_makefile(const char *dir, const char *name)
         "build/icono.o: platform/icono.rc $(wildcard platform/*.ico) | build\n"
         "\twindres -I platform $< -O coff -o $@\n\n"
         "%s$(EXE): $(PLAT_OBJ) $(RT_OBJ) $(GEN_OBJ) $(ICON_OBJ)\n"
-        "\t$(CC) -o $@ $^ $(SDL_LIBS)\n\n"
+        "\t$(CC) -o $@ $^ $(SDL_LIBS) -lm\n\n"
         "# dist/: el ejecutable (y, si en Windows no quedó estático, las DLL de MSYS2 que pida); se puede copiar a otro equipo\n"
         "dist: %s$(EXE)\n"
         "\tmkdir -p dist\n"
