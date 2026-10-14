@@ -96,7 +96,7 @@ if [ -x ./gbrecomp ] || [ -x ./gbrecomp.exe ]; then
         else
             falla=$((falla + 1))
             fallidas="$fallidas
-  gbrecomp --html/--viz --color/--codemap: $(tail -3 /tmp/gbtest.out)"
+  gbrecomp --html/--viz --color/--codemap: $(tail -16 /tmp/gbtest.out)"
         fi
     fi
 fi
@@ -111,7 +111,7 @@ if [ -x "$GB" ] && { [ -z "$FILTRO" ] || case "interprete" in *"$FILTRO"*) true 
         pasa=$((pasa + 1))
     else
         falla=$((falla + 1)); fallidas="$fallidas
-  gb (ventana, capturas): $(tail -3 /tmp/gbtest.out)"
+  gb (ventana, capturas): $(tail -16 /tmp/gbtest.out)"
     fi
 fi
 
@@ -125,7 +125,7 @@ if [ -z "$FILTRO" ] || case "gbramdump" in *"$FILTRO"*) true ;; *) false ;; esac
     else
         falla=$((falla + 1))
         fallidas="$fallidas
-  gbramdump: $(tail -3 /tmp/gbtest.out)"
+  gbramdump: $(tail -16 /tmp/gbtest.out)"
     fi
 fi
 
@@ -142,7 +142,7 @@ if [ -x ./gbrecomp$EXE ] && { [ -z "$FILTRO" ] || case "recomp" in *"$FILTRO"*) 
     else
         falla=$((falla + 1))
         fallidas="$fallidas
-  recomp cpu_instrs: $(tail -3 /tmp/gbtest.out)"
+  recomp cpu_instrs: $(tail -16 /tmp/gbtest.out)"
     fi
 fi
 
@@ -162,7 +162,7 @@ if [ -x ./gbrecomp$EXE ] && { [ -z "$FILTRO" ] || case "recomp" in *"$FILTRO"*) 
         else
             falla=$((falla + 1))
             fallidas="$fallidas
-  recomp DMA en HRAM $n: $(tail -3 /tmp/gbtest.out)"
+  recomp DMA en HRAM $n: $(tail -16 /tmp/gbtest.out)"
         fi
     done
 fi
@@ -185,7 +185,7 @@ if [ -x ./gbrecomp$EXE ] && { [ -z "$FILTRO" ] || case "recomp" in *"$FILTRO"*) 
     else
         falla=$((falla + 1))
         fallidas="$fallidas
-  recomp ei_di: $(tail -3 /tmp/gbtest.out)"
+  recomp ei_di: $(tail -16 /tmp/gbtest.out)"
     fi
 fi
 
@@ -204,7 +204,7 @@ if [ -x ./gbrecomp$EXE ] && { [ -z "$FILTRO" ] || case "recomp" in *"$FILTRO"*) 
     else
         falla=$((falla + 1))
         fallidas="$fallidas
-  recomp con varias --trace: $(tail -3 /tmp/gbtest.out)"
+  recomp con varias --trace: $(tail -16 /tmp/gbtest.out)"
     fi
 fi
 
@@ -244,7 +244,7 @@ if [ -x ./gbrecomp$EXE ] && { [ -z "$FILTRO" ] || case "recomp" in *"$FILTRO"*) 
     else
         falla=$((falla + 1))
         fallidas="$fallidas
-  recomp código en WRAM (ROM mínima): $(tail -3 /tmp/gbtest.out)"
+  recomp código en WRAM (ROM mínima): $(tail -16 /tmp/gbtest.out)"
     fi
     # El ejecutable del juego (aquí gb, el intérprete con ventana) también anota ese código cuando se
     # juega con --uncovered, y con las mismas líneas que difftest: las dos herramientas comparten
@@ -280,7 +280,7 @@ if [ -x ./gbrecomp$EXE ] && { [ -z "$FILTRO" ] || case "recomp" in *"$FILTRO"*) 
     else
         falla=$((falla + 1))
         fallidas="$fallidas
-  recomp código en WRAM (interrupt_time): $(tail -3 /tmp/gbtest.out)"
+  recomp código en WRAM (interrupt_time): $(tail -16 /tmp/gbtest.out)"
     fi
 fi
 
