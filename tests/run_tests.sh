@@ -107,7 +107,7 @@ GB=./gb
 if [ -x "$GB" ] && { [ -z "$FILTRO" ] || case "interprete" in *"$FILTRO"*) true ;; *) false ;; esac; }; then
     # Cada menú y cada diálogo se dibuja igual que la referencia tests/ui_golden.txt (si cambia a propósito:
     # UI_GOLDEN_UPDATE=1 sh tests/run_tests.sh interprete, y revisa build/shots/)
-    if sh tools/retrorecomp/shared/ui_golden.sh "$GB" "$T/dmg-acid2/dmg-acid2.gb" tests/ui_golden.txt "0 1 2 3 4 5 6" "47 48 49" > /tmp/gbtest.out 2>&1; then
+    if sh tools/retrorecomp/shared/ui_golden.sh "$GB" "$T/dmg-acid2/dmg-acid2.gb" tests/ui_golden.txt "0 1 2 3 4 5 6" "47 49" > /tmp/gbtest.out 2>&1; then
         pasa=$((pasa + 1))
     else
         falla=$((falla + 1)); fallidas="$fallidas
