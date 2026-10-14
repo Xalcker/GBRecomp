@@ -1,4 +1,11 @@
-#!/bin/sh
+    # Cada menú y cada diálogo se dibuja igual que la referencia tests/ui_golden.txt (si cambia a propósito:
+    # UI_GOLDEN_UPDATE=1 sh tests/run_tests.sh gb, y revisa build/shots/)
+    if sh tools/retrorecomp/shared/ui_golden.sh "$GB" "$T/dmg-acid2/dmg-acid2.gb" tests/ui_golden.txt "0 1 2 3 4 5 6" "47 48 49" > /tmp/gbtest.out 2>&1; then
+        pasa=$((pasa + 1))
+    else
+        falla=$((falla + 1)); fallidas="$fallidas
+  gb (ventana, capturas): $(tail -3 /tmp/gbtest.out)"
+    fi#!/bin/sh
 # Corre las ROMs de prueba (testroms/) que aplican a un DMG y resume.
 # Uso: sh tests/run_tests.sh [filtro]
 #   filtro: subcadena de la ruta, p. ej. "timer" o "blargg"
@@ -105,14 +112,14 @@ fi
 GB=./gb
 [ -x ./gb.exe ] && GB=./gb.exe
 if [ -x "$GB" ] && { [ -z "$FILTRO" ] || case "interprete" in *"$FILTRO"*) true ;; *) false ;; esac; }; then
-    ok=1
-    for m in 0 1 2 3 4 5 6; do
-        rm -f build/gb_ui.png
-        "$GB" "$T/dmg-acid2/dmg-acid2.gb" --ui-shot build/gb_ui.png --ui-frames 5 --ui-menu $m > /tmp/gbtest.out 2>&1 \
-            && [ -s build/gb_ui.png ] || { ok=0; echo "  menú $m" >> /tmp/gbtest.out; }
-    done
-    if [ $ok = 1 ]; then pasa=$((pasa + 1)); else falla=$((falla + 1)); fallidas="$fallidas
-  gb (intérprete con ventana): $(tail -3 /tmp/gbtest.out)"; fi
+    # Cada menú y cada diálogo se dibuja igual que la referencia tests/ui_golden.txt (si cambia a propósito:
+    # UI_GOLDEN_UPDATE=1 sh tests/run_tests.sh interprete, y revisa build/shots/)
+    if sh tools/retrorecomp/shared/ui_golden.sh "$GB" "$T/dmg-acid2/dmg-acid2.gb" tests/ui_golden.txt "0 1 2 3 4 5 6" "47 48 49" > /tmp/gbtest.out 2>&1; then
+        pasa=$((pasa + 1))
+    else
+        falla=$((falla + 1)); fallidas="$fallidas
+  gb (ventana, capturas): $(tail -3 /tmp/gbtest.out)"
+    fi
 fi
 
 # --- gbramdump: WRAM y HRAM tras correr la ROM (el equivalente de ramdump de NESRecomp) ---
