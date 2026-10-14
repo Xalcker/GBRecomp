@@ -1,11 +1,4 @@
-    # Cada menú y cada diálogo se dibuja igual que la referencia tests/ui_golden.txt (si cambia a propósito:
-    # UI_GOLDEN_UPDATE=1 sh tests/run_tests.sh gb, y revisa build/shots/)
-    if sh tools/retrorecomp/shared/ui_golden.sh "$GB" "$T/dmg-acid2/dmg-acid2.gb" tests/ui_golden.txt "0 1 2 3 4 5 6" "47 48 49" > /tmp/gbtest.out 2>&1; then
-        pasa=$((pasa + 1))
-    else
-        falla=$((falla + 1)); fallidas="$fallidas
-  gb (ventana, capturas): $(tail -3 /tmp/gbtest.out)"
-    fi#!/bin/sh
+#!/bin/sh
 # Corre las ROMs de prueba (testroms/) que aplican a un DMG y resume.
 # Uso: sh tests/run_tests.sh [filtro]
 #   filtro: subcadena de la ruta, p. ej. "timer" o "blargg"
