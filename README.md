@@ -1,3 +1,5 @@
+> **Este repositorio está archivado.** GBRecomp sigue en [Xalcker/retrorecomp](https://github.com/Xalcker/retrorecomp), en la carpeta [`gb/`](https://github.com/Xalcker/retrorecomp/tree/main/gb), con toda su historia. Las issues abiertas se transfirieron allí (etiqueta `sys:gb`), y la versión v0.1.0 es la etiqueta `gb-v0.1.0`.
+
 Hay que clonar con el submódulo de retrorecomp, que trae el código que comparten los cuatro recompiladores (`random_pad.h`, `trace_line.h`): `git clone --recursive`, o `git submodule update --init` en un clon ya hecho. El ZIP de GitHub no lo incluye.
 
 # GBRecomp
